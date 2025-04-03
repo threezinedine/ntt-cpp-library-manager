@@ -1,0 +1,13 @@
+{
+    "version": "1.0.0",
+    "dependencies": [
+        {
+            "folder": "googletest",
+            "github": "https://github.com/google/googletest.git"
+        },
+        {
+            "folder": "ntt-lib",
+            "github": "https://github.com/threezinedine/ntt-lib.git"
+        }
+    ]
+}
