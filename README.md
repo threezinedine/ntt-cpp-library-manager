@@ -24,7 +24,7 @@ The example of the project structure is as follows:
 ├── tests
 ├── CMakeLists.txt
 └── vendor
-```
+``
 
 The example content of the `ntt-lib.json` is as follows:
 
@@ -61,6 +61,15 @@ If the `project 1` and `project 2` have the same vendor (like `googletest`) then
 ├── project1
 ├── project1
 └── CMakeLists.txt
+```
+
+# Build the project
+## Windows
+```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+pyinstaller --onefile main.py --name manager
 ```
 
 # Acknowledgement

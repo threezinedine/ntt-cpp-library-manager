@@ -1,9 +1,11 @@
 import os
 import json
+import utils
 import logging
 import argparse
 import contants
 import git_utils
+import dependency
 import cmake_utils
 from dependency import Dependency
 from colorama import Fore, Style, init
@@ -63,29 +65,54 @@ console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
 
-def validate_config_file(config: dict) -> bool:
-    if "version" not in config:
-        logger.error("The version field is required in the config file.")
+def get_dependencies_from_path(
+    vendor_folder: str,
+    current_dependency: Dependency,
+    dependencies: list[Dependency],
+) -> bool:
+    config_file = os.path.join(
+        vendor_folder,
+        current_dependency.folder,
+        contants.CONFIG_FILE_NAME,
+    )
+    ## Add all dependencies of the current dependency
+    if not os.path.exists(config_file):
         return False
 
-    if "dependencies" not in config:
-        logger.error("The dependencies field is required in the config file.")
-        return False
+    with open(config_file, "r") as f:
+        vendor_config = json.load(f)
 
-    if not isinstance(config["dependencies"], list):
-        logger.error("The dependencies field must be a list.")
-        return False
+    new_dependencies = []
 
-    for dependency in config["dependencies"]:
-        if "github" not in dependency:
-            logger.error("The github field is required in the dependencies list.")
-            return False
+    for dependency in vendor_config["dependencies"]:
+        child_dependency = None
 
-        if "folder" not in dependency:
-            logger.error("The folder field is required in the dependencies list.")
-            return False
+        if dependency["folder"] in [dependency.folder for dependency in dependencies]:
+            for dep in dependencies:
+                if dep.folder == dependency["folder"]:
+                    child_dependency = dep
+                    break
 
-    return True
+            if child_dependency is None:
+                logger.error(
+                    f"The dependency {dependency['folder']} does not exist in the dependencies list."
+                )
+                exit(1)
+        else:
+            child_dependency = utils.dict_to_dataclass(dependency, Dependency)
+            new_dependencies.append(child_dependency)
+
+        current_dependency.child_dependencies.append(child_dependency)
+
+    dependencies.extend(new_dependencies)
+
+    should_install_dependencies = False
+    for dependency in new_dependencies:
+        if not dependency.is_installed(vendor_folder):
+            should_install_dependencies = True
+            break
+
+    return should_install_dependencies
 
 
 if __name__ == "__main__":
@@ -106,74 +133,71 @@ if __name__ == "__main__":
 
     logger.info(f"The config file is read successfully.")
 
-    if not validate_config_file(config):
+    if not dependency.validate_config_file(config):
         exit(1)
-
-    logger.info(f"The version of the project is {config['version']}.")
-
-    logger.info("Start processing the dependencies...")
-
-    dependencies = {}
 
     if not os.path.exists(args.output_folder):
         logger.info(f"The output folder {args.output_folder} does not exist.")
         os.makedirs(args.output_folder)
 
-    for dependency in config["dependencies"]:
-        if dependency["folder"] in dependencies:
-            continue
+    logger.info(f"The version of the project is {config['version']}.")
 
-        dependencies[dependency["folder"]] = Dependency(
-            folder=dependency["folder"],
-            github=dependency["github"],
-            commit=dependency["commit"] if "commit" in dependency else None,
-            installed=False,
-            current_run_clone=False,
-            variables=dependency["variables"] if "variables" in dependency else {},
-            additional=dependency["additional"] if "additional" in dependency else None,
-        )
+    logger.info("Start processing the dependencies...")
 
-    for dependency in dependencies.values():
-        if dependency.installed:
-            continue
+    dependencies = [
+        utils.dict_to_dataclass(dependency, Dependency)
+        for dependency in config["dependencies"]
+    ]
 
-        logger.info(f"Processing the dependency: {dependency.folder}...")
+    logger.debug(f"Dependencies: {dependencies}")
 
-        vendor_folder = os.path.join(args.output_folder, dependency.folder)
+    while True:
+        has_dependency_to_install = False
+        dependenciesClone = dependencies.copy()
 
-        if not git_utils.is_git_repo(vendor_folder):
-            if os.path.exists(vendor_folder):
-                os.remove(vendor_folder)
-        else:
-            logger.info(f"The dependency {dependency.folder} is already installed.")
-            dependency.installed = True
-            continue
+        for dependency in dependenciesClone:
+            logger.info(f"Processing the dependency: {dependency.folder}...")
+            if not dependency.is_installed(args.output_folder):
+                logger.info(f"The dependency {dependency.folder} is not installed.")
+                logger.info(f"Processing the dependency: {dependency.folder}...")
+                dependency.install(args.output_folder)
+            else:
+                logger.info(f"The dependency {dependency.folder} is already installed.")
 
-        if not git_utils.clone_repository(dependency.github, vendor_folder):
-            exit(1)
+            if dependency.has_child_dependencies(args.output_folder):
+                logger.info(
+                    f"The dependency {dependency.folder} has child dependencies."
+                )
+                has_dependency_to_install = (
+                    has_dependency_to_install
+                    or get_dependencies_from_path(
+                        args.output_folder,
+                        dependency,
+                        dependencies,
+                    )
+                )
 
-        dependency.current_run_clone = True
+                logger.debug(f"New dependencies: {dependencies}")
+            else:
+                logger.info(
+                    f"The dependency {dependency.folder} has no child dependencies."
+                )
 
-        if dependency.commit:
-            git_utils.modify_repository_commit(vendor_folder, dependency.commit)
+        if not has_dependency_to_install:
+            break
 
-        dependency.installed = True
+    logger.info("Increasing the index of the dependencies...")
+    for dependency in dependencies:
+        dependency.increase_index()
+
+    logger.debug(f"Increased index of the dependencies: {dependencies}")
+
+    cmake_utils.generate_vendor_cmake(dependencies, args.output_folder)
 
     if args.update:
-        logger.debug("Start updating all dependencies...")
-        for dependency in dependencies.values():
-            if dependency.current_run_clone:
-                logger.info(f"The dependency {dependency.folder} is updated.")
-                continue
-
-            vendor_folder = os.path.join(args.output_folder, dependency.folder)
-            if dependency.commit is None or not git_utils.check_commit_match(
-                vendor_folder,
-                dependency.commit,
-            ):
-                logger.info(f"Updating the dependency: {dependency.folder}...")
-                git_utils.modify_repository_commit(vendor_folder, dependency.commit)
-
-    cmake_utils.generate_vendor_cmake(dependencies.values(), args.output_folder)
+        for dependency in dependencies:
+            git_utils.modify_repository_commit(
+                os.path.join(args.output_folder, dependency.folder)
+            )
 
     logger.info("All dependencies are processed successfully.")

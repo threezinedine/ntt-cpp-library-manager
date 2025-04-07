@@ -25,24 +25,10 @@ def generate_vendor_cmake(
 
     content = ""
 
-    for dependency in dependencies:
-        content += f"####### Start adding the {dependency.folder} #######\n"
+    sorted_dependencies = sorted(dependencies, key=lambda x: x.index, reverse=True)
 
-        has_variables = False
-        for variable_name, variable_value in dependency.variables.items():
-            content += f"set({variable_name} {variable_value})\n"
-            has_variables = True
-
-        if dependency.additional:
-            content += f"{dependency.additional}\n"
-            has_variables = True
-
-        if has_variables:
-            content += "\n"
-
-        content += f"add_subdirectory({dependency.folder})\n"
-
-        content += f"####### End adding the {dependency.folder} #######\n\n"
+    for dependency in sorted_dependencies:
+        content += dependency.to_cmake_string()
 
     with open(os.path.join(output_folder, "CMakeLists.txt"), "w") as f:
         f.write(content)

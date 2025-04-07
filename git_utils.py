@@ -159,7 +159,18 @@ def modify_repository_commit(folder: str, commit: typing.Optional[str] = None) -
             stdout=subprocess.DEVNULL,
         )
 
+        logger.info(f"Pulling the repository {folder}...")
+        subprocess.run(
+            ["git", "pull", "origin", "main"],
+            cwd=folder,
+            capture_output=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        logger.info(f"Pulled the repository {folder} successfully.")
+
         if commit is not None:
+            logger.info(f"Checking out the commit {commit}...")
             subprocess.run(
                 ["git", "checkout", commit],
                 cwd=folder,
